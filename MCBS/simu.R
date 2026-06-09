@@ -8,7 +8,7 @@ run_one <- function(n, p, k, beta_AY, beta_MY, beta_AM) {
   
   invisible(capture.output({
     sel_geo <- screening(data$X, data$Y, data$M, data$A, k)
-    sel_s1  <- screening_S1(data$X, data$Y, data$A, k)
+    sel_s1  <- screening_S1_clean(data$X, data$Y, data$A, k)
   }))
   
   res <- data.frame(
@@ -61,7 +61,7 @@ for(beta in c(0.05, 0.1, 0.2, 0.6, 0.9)) {
     n = 200,
     p = 20,
     k = 5,
-    beta_AY = 0.6,
+    beta_AY = 0.2,
     beta_MY = 0.6,
     beta_AM = beta
   )

@@ -122,3 +122,32 @@ screening <- function(X, Y, M, A, k) {
   
   return(order(geo)[1:k])
 }
+
+
+S1_score_clean <- function(xj, Y, A) {
+  w1 <- mean(A == 1)
+  w0 <- mean(A == 0)
+  
+  s1 <- 0
+  
+  if (sum(A == 1) >= 2) {
+    s1 <- s1 + w1 * bcov(xj[A == 1], Y[A == 1])^2
+  }
+  
+  if (sum(A == 0) >= 2) {
+    s1 <- s1 + w0 * bcov(xj[A == 0], Y[A == 0])^2
+  }
+  
+  return(s1)
+}
+
+screening_S1_clean <- function(X, Y, A, k) {
+  p <- ncol(X)
+  S1 <- numeric(p)
+  
+  for (j in 1:p) {
+    S1[j] <- S1_score_clean(X[, j], Y, A)
+  }
+  
+  return(order(-S1)[1:k])
+}
