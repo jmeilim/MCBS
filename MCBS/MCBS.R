@@ -151,3 +151,4 @@ screening_S1_clean <- function(X, Y, A, k) {
   
   return(order(-S1)[1:k])
 }
+

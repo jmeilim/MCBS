@@ -11,7 +11,7 @@ DGP <- function(n, p, beta_AY,  beta_MY, beta_AM) {
   
 
   prob_A <- expit(X[,1]*beta_AY +
-                  X[,2]*beta_AM)
+                  X[,2]*beta_AM + X[,4])
   A <- rbinom(n, 1, prob_A)
   
 
@@ -24,7 +24,9 @@ DGP <- function(n, p, beta_AY,  beta_MY, beta_AM) {
   Y <- 1.5*A + 2*M +
        X[,1]*beta_AY +
        X[,3]*beta_MY +
+       X[,5] +
        rnorm(n)
   
   return(list(X=X, A=A, M=M, Y=Y))
 }
+
