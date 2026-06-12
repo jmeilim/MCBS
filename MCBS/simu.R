@@ -6,20 +6,17 @@ library(ggplot2)
 source("MCBS/MCBS.R")
 source("MCBS/DGP.R")
 
-# -----------------------------
-# Une simulation : geo sélectionne-t-il X2 ?
-# -----------------------------
-run_one_x2_geo <- function(b, n, p, k, beta_AY, beta_MY, beta_AM) {
+run_one <- function(b, n, p, lambda) {
   
   set.seed(1000 + b)
   
-  dat <- DGP(
+  dat <- DGP_rich(
     n = n,
     p = p,
-    beta_AY = beta_AY,
-    beta_MY = beta_MY,
-    beta_AM = beta_AM
+    lambda = lambda
   )
+  
+  k <- floor(n / log(n))
   
   selected_geo <- screening(
     X = dat$X,
@@ -29,23 +26,29 @@ run_one_x2_geo <- function(b, n, p, k, beta_AY, beta_MY, beta_AM) {
     k = k
   )
   
-  # X2 = variable 2
-  as.numeric(2 %in% selected_geo)
+  capture_all_confounders <- as.numeric(
+    all(dat$true_confounders %in% selected_geo)
+  )
+  
+  capture_pure_predictors <- mean(
+    dat$pure_predictors %in% selected_geo
+  )
+  
+  data.frame(
+    capture_all_confounders = capture_all_confounders,
+    capture_pure_predictors = capture_pure_predictors
+  )
 }
 
 # -----------------------------
-# Pour un scénario (n,p) et une valeur beta_AM
-# retourne la proba de sélectionner X2
+# Simulation parallèle
 # -----------------------------
-run_prob_x2_geo <- function(
+run_simulation <- function(
     B = 100,
     n,
     p,
-    k,
-    beta_AY,
-    beta_MY,
-    beta_AM,
-    ncores = 100
+    lambda,
+    ncores = 16
 ) {
   
   cl <- makeCluster(ncores)
@@ -54,54 +57,44 @@ run_prob_x2_geo <- function(
   clusterEvalQ(cl, {
     library(Ball)
     source("MCBS/MCBS.R")
-    source("MCBS/DGP.R")
     NULL
   })
   
   clusterExport(
     cl,
-    c("run_one_x2_geo", "n", "p", "k", "beta_AY", "beta_MY", "beta_AM"),
+    c("expit", "DGP_rich", "run_one", "n", "p", "lambda"),
     envir = environment()
   )
   
-  sel_x2 <- unlist(
-    parLapply(cl, 1:B, function(b) {
-      run_one_x2_geo(
-        b = b,
-        n = n,
-        p = p,
-        k = k,
-        beta_AY = beta_AY,
-        beta_MY = beta_MY,
-        beta_AM = beta_AM
-      )
-    })
-  )
+  all_res <- parLapply(cl, 1:B, function(b) {
+    run_one(
+      b = b,
+      n = n,
+      p = p,
+      lambda = lambda
+    )
+  })
   
-  mean(sel_x2)
+  all_res <- do.call(rbind, all_res)
+  
+  data.frame(
+    prob_all_confounders = mean(all_res$capture_all_confounders),
+    prob_pure_predictors = mean(all_res$capture_pure_predictors)
+  )
 }
 
 # -----------------------------
-# Grille des scénarios
+# Paramètres
 # -----------------------------
 scenarios <- data.frame(
   n = c(300, 300, 600, 400, 500, 600),
   p = c(100, 1000, 200, 1000, 1500, 2000)
 )
 
-# -----------------------------
-# Grille des beta_AM
-# -----------------------------
-beta_grid <- seq(0.1, 1.5, by = 0.1)
+lambda_grid <- seq(0.5, 4, by = 0.5)
 
-# -----------------------------
-# Paramètres fixes
-# -----------------------------
 B <- 100
-k <- 30
-beta_AY <- 0.2
-beta_MY <- 0.6
-ncores <- 16   # adapte selon ton cluster
+ncores <- 100
 
 # -----------------------------
 # Boucle principale
@@ -114,21 +107,18 @@ for (i in 1:nrow(scenarios)) {
   p_i <- scenarios$p[i]
   
   cat("\n=============================\n")
-  cat("Scenario:", "(n,p) =", paste0("(", n_i, ",", p_i, ")"), "\n")
+  cat("Scenario:", paste0("(", n_i, ", ", p_i, ")"), "\n")
   cat("=============================\n")
   
-  for (beta in beta_grid) {
+  for (lambda in lambda_grid) {
     
-    cat("beta_AM =", beta, "\n")
+    cat("lambda =", lambda, "\n")
     
-    prob_x2 <- run_prob_x2_geo(
+    res <- run_simulation(
       B = B,
       n = n_i,
       p = p_i,
-      k = k,
-      beta_AY = beta_AY,
-      beta_MY = beta_MY,
-      beta_AM = beta,
+      lambda = lambda,
       ncores = ncores
     )
     
@@ -138,62 +128,50 @@ for (i in 1:nrow(scenarios)) {
         n = n_i,
         p = p_i,
         scenario = paste0("(", n_i, ", ", p_i, ")"),
-        beta_AM = beta,
-        prob_x2 = prob_x2
+        lambda = lambda,
+        prob_all_confounders = res$prob_all_confounders,
+        prob_pure_predictors = res$prob_pure_predictors
       )
     )
     
-    cat("   -> P(selection X2) =", prob_x2, "\n")
+    print(tail(results, 1))
   }
 }
 
-print(results)
-
-# Sauvegarde éventuelle
-write.csv(results, "results_prob_X2_geo.csv", row.names = FALSE)
+write.csv(results, "results_rich_DGP_geo.csv", row.names = FALSE)
 
 # -----------------------------
-# Seuil beta_AM minimal pour atteindre 0.8
+# Graphe principal
 # -----------------------------
-thresholds <- do.call(rbind, lapply(split(results, results$scenario), function(df) {
-  
-  df <- df[order(df$beta_AM), ]
-  idx <- which(df$prob_x2 >= 0.8)
-  
-  if (length(idx) == 0) {
-    beta_threshold <- NA
-  } else {
-    beta_threshold <- df$beta_AM[min(idx)]
-  }
-  
-  data.frame(
-    scenario = df$scenario[1],
-    beta_threshold_0.8 = beta_threshold
-  )
-}))
-
-print(thresholds)
-
-write.csv(thresholds, "thresholds_X2_geo_0.8.csv", row.names = FALSE)
-
-# -----------------------------
-# Graphe
-# -----------------------------
-g <- ggplot(results, aes(x = beta_AM, y = prob_x2, color = scenario)) +
+g <- ggplot(results, aes(
+  x = lambda,
+  y = prob_all_confounders,
+  color = scenario
+)) +
   geom_line(linewidth = 1) +
   geom_point(size = 2) +
-  geom_hline(yintercept = 0.8, color = "darkgreen", linetype = "dashed", linewidth = 1) +
-  scale_x_continuous(breaks = beta_grid) +
+  geom_hline(
+    yintercept = 0.8,
+    color = "darkgreen",
+    linetype = "dashed",
+    linewidth = 1
+  ) +
   scale_y_continuous(limits = c(0, 1)) +
   labs(
-    title = "Probabilité de sélectionner X2 selon beta_AM",
-    subtitle = "Méthode geo — une courbe par scénario (n, p)",
-    x = expression(beta[AM]),
-    y = "P(X2 sélectionné)",
+    title = "Probabilité de récupérer tous les vrais confounders",
+    subtitle = "Méthode geo — DGP enrichi avec signaux weak / medium / strong",
+    x = expression(lambda),
+    y = "P(tous les confounders sélectionnés)",
     color = "Scénario (n, p)"
   ) +
   theme_minimal(base_size = 13)
 
 print(g)
 
-ggsave("graph_prob_X2_geo.png", plot = g, width = 10, height = 6, dpi = 300)
+ggsave(
+  "graph_rich_DGP_geo.png",
+  plot = g,
+  width = 10,
+  height = 6,
+  dpi = 300
+)
