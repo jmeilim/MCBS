@@ -116,39 +116,42 @@ screening <- function(X, Y, M, A, k) {
   
   res <- res[order(res$geo), ]
   
-  print(res[1:10, ])
-  cat("Rangs des vrais confondants :\n")
-  print(res[res$variable %in% c(1,2,3), ])
   
   return(order(geo)[1:k])
 }
 
 
-S1_score_clean <- function(xj, Y, A) {
-  w1 <- mean(A == 1)
-  w0 <- mean(A == 0)
-  
-  s1 <- 0
-  
-  if (sum(A == 1) >= 2) {
-    s1 <- s1 + w1 * bcov(xj[A == 1], Y[A == 1])^2
-  }
-  
-  if (sum(A == 0) >= 2) {
-    s1 <- s1 + w0 * bcov(xj[A == 0], Y[A == 0])^2
-  }
-  
-  return(s1)
-}
-
-screening_S1_clean <- function(X, Y, A, k) {
-  p <- ncol(X)
+screening_S1 <- function(X, Y, A, k) {
+  p  <- ncol(X)
   S1 <- numeric(p)
-  
-  for (j in 1:p) {
-    S1[j] <- S1_score_clean(X[, j], Y, A)
+  for(j in 1:p) {
+    S1[j] <- Causal.cor(X[,j], Y, A)
   }
-  
   return(order(-S1)[1:k])
 }
 
+screening_deux_etapes <- function(X, Y, M, A, k) {
+  
+  p  <- ncol(X)
+  k2 <- floor(k/3)   
+  k1 <- k - k2
+  
+  
+  S1 <- S2 <- S3 <- numeric(p)
+  for(j in 1:p) {
+    S1[j] <- Causal.cor(X[,j], Y, A)
+    S2[j] <- Causal.cor(X[,j], M, A)
+    S3[j] <- MCBS.cor(as.matrix(X[,j]), as.matrix(Y), A, M)
+  }
+  
+ 
+  top_S2 <- order(-S2)[1:k2]
+  
+ 
+  reste   <- setdiff(1:p, top_S2)
+  r1      <- rank(-S1[reste])
+  r3      <- rank(-S3[reste])
+  top_geo <- reste[order((r1 * r3)^(1/2))[1:k1]]
+  
+  union(top_S2, top_geo)
+}

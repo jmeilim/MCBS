@@ -1,5 +1,32 @@
+# data generation process
+
+
 expit <- function(x) {
   exp(x) / (1 + exp(x))
+}
+
+DGP <- function(n, p, beta_AY,  beta_MY, beta_AM) { 
+  
+  X <- matrix(runif(n*p, -1, 1), ncol = p)
+  
+  
+  prob_A <- expit(X[,1]*beta_AY +
+                    X[,2]*beta_AM)
+  A <- rbinom(n, 1, prob_A)
+  
+  
+  prob_M <- expit(A +
+                    X[,2]*beta_AM +
+                    X[,3]*beta_MY)
+  M <- rbinom(n, 1, prob_M)
+  
+  
+  Y <- 1.5*A + 2*M +
+    X[,1]*beta_AY +
+    X[,3]*beta_MY +
+    rnorm(n)
+  
+  return(list(X=X, A=A, M=M, Y=Y))
 }
 
 DGP_rich <- function(
@@ -13,14 +40,13 @@ DGP_rich <- function(
   
   beta <- lambda * beta_base
   
-  # indices
+ 
   idx_AY <- 1:3
   idx_AM <- 4:6
   idx_MY <- 7:9
   idx_pY <- 10:12
   idx_pM <- 13:15
   
-  # coefficients faible / moyen / fort
   b_AY <- beta
   b_AM <- beta
   b_MY <- beta
@@ -82,3 +108,4 @@ DGP_rich <- function(
     beta = beta
   ))
 }
+
