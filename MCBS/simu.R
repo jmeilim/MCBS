@@ -1,177 +1,50 @@
-library(parallel)
-library(Ball)
-library(ggplot2)
-
-# Charger les fonctions
 source("MCBS/MCBS.R")
-source("MCBS/DGP.R")
+source("MCBS/DGP.R")  
 
-run_one <- function(b, n, p, lambda) {
+test_rich <- function(n=300, p=1000, lambda=1.5, B=50, k=30) {
   
-  set.seed(1000 + b)
   
-  dat <- DGP_rich(
-    n = n,
-    p = p,
-    lambda = lambda
-  )
+  CAY_2step <- CAM_2step <- CMY_2step <- PY_2step <- PM_2step <- numeric(B)
+  CAY_geo   <- CAM_geo   <- CMY_geo  <-  PY_geo <-  PM_geo   <- numeric(B)
   
-  k <- floor(n / log(n))
-  
-  selected_geo <- screening(
-    X = dat$X,
-    Y = dat$Y,
-    M = dat$M,
-    A = dat$A,
-    k = k
-  )
-  
-  capture_all_confounders <- as.numeric(
-    all(dat$true_confounders %in% selected_geo)
-  )
-  
-  capture_pure_predictors <- mean(
-    dat$pure_predictors %in% selected_geo
-  )
-  
-  data.frame(
-    capture_all_confounders = capture_all_confounders,
-    capture_pure_predictors = capture_pure_predictors
-  )
-}
-
-# -----------------------------
-# Simulation parallèle
-# -----------------------------
-run_simulation <- function(
-    B = 100,
-    n,
-    p,
-    lambda,
-    ncores = 16
-) {
-  
-  cl <- makeCluster(ncores)
-  on.exit(stopCluster(cl))
-  
-  clusterEvalQ(cl, {
-    library(Ball)
-    source("MCBS/MCBS.R")
-    NULL
-  })
-  
-  clusterExport(
-    cl,
-    c("expit", "DGP_rich", "run_one", "n", "p", "lambda"),
-    envir = environment()
-  )
-  
-  all_res <- parLapply(cl, 1:B, function(b) {
-    run_one(
-      b = b,
-      n = n,
-      p = p,
-      lambda = lambda
-    )
-  })
-  
-  all_res <- do.call(rbind, all_res)
-  
-  data.frame(
-    prob_all_confounders = mean(all_res$capture_all_confounders),
-    prob_pure_predictors = mean(all_res$capture_pure_predictors)
-  )
-}
-
-# -----------------------------
-# Paramètres
-# -----------------------------
-scenarios <- data.frame(
-  n = c(300, 300, 600, 400, 500, 600),
-  p = c(100, 1000, 200, 1000, 1500, 2000)
-)
-
-lambda_grid <- seq(0.5, 4, by = 0.5)
-
-B <- 100
-ncores <- 100
-
-# -----------------------------
-# Boucle principale
-# -----------------------------
-results <- data.frame()
-
-for (i in 1:nrow(scenarios)) {
-  
-  n_i <- scenarios$n[i]
-  p_i <- scenarios$p[i]
-  
-  cat("\n=============================\n")
-  cat("Scenario:", paste0("(", n_i, ", ", p_i, ")"), "\n")
-  cat("=============================\n")
-  
-  for (lambda in lambda_grid) {
+  for(b in 1:B) {
+    set.seed(1000 + b)
+    dat <- DGP_rich(n, p, lambda)
     
-    cat("lambda =", lambda, "\n")
+    s2 <- screening_deux_etapes(dat$X, dat$Y, dat$M, dat$A, k)
+    sg <- screening_geo(dat$X, dat$Y, dat$M, dat$A, k)
     
-    res <- run_simulation(
-      B = B,
-      n = n_i,
-      p = p_i,
-      lambda = lambda,
-      ncores = ncores
-    )
-    
-    results <- rbind(
-      results,
-      data.frame(
-        n = n_i,
-        p = p_i,
-        scenario = paste0("(", n_i, ", ", p_i, ")"),
-        lambda = lambda,
-        prob_all_confounders = res$prob_all_confounders,
-        prob_pure_predictors = res$prob_pure_predictors
-      )
-    )
-    
-    print(tail(results, 1))
+    # C_AY = indices 1,2,3
+    # C_AM = indices 4,5,6
+    # C_MY = indices 7,8,9
+    CAY_2step[b] <- mean(1:3 %in% s2)
+    CAM_2step[b] <- mean(4:6 %in% s2)
+    CMY_2step[b] <- mean(7:9 %in% s2)
+    PY_2step[b] <- mean(10:12 %in% s2)
+    PM_2step[b] <- mean(13:15 %in% s2)
+    CAY_geo[b]   <- mean(1:3 %in% sg)
+    CAM_geo[b]   <- mean(4:6 %in% sg)
+    CMY_geo[b]   <- mean(7:9 %in% sg)
+    PY_geo[b] <- mean(10:12 %in% sg)
+    PM_geo[b] <- mean(13:15 %in% sg)
   }
+  
+  cat("\n=== DGP_rich n=",n,"p=",p,"lambda=",lambda,"===\n")
+  cat("         2step    geo\n")
+  cat("C_AY  :", round(mean(CAY_2step),3),
+      round(mean(CAY_geo),3), "\n")
+  cat("C_AM  :", round(mean(CAM_2step),3),
+      round(mean(CAM_geo),3), "\n")
+  cat("C_MY  :", round(mean(CMY_2step),3),
+      round(mean(CMY_geo),3), "\n") 
+  cat("PY  :", round(mean(PY_2step),3),
+      round(mean(PY_geo),3), "\n")
+  cat("PM  :", round(mean(PY_2step),3),
+      round(mean(PM_geo),3), "\n")
 }
 
-write.csv(results, "results_rich_DGP_geo.csv", row.names = FALSE)
 
-# -----------------------------
-# Graphe principal
-# -----------------------------
-g <- ggplot(results, aes(
-  x = lambda,
-  y = prob_all_confounders,
-  color = scenario
-)) +
-  geom_line(linewidth = 1) +
-  geom_point(size = 2) +
-  geom_hline(
-    yintercept = 0.8,
-    color = "darkgreen",
-    linetype = "dashed",
-    linewidth = 1
-  ) +
-  scale_y_continuous(limits = c(0, 1)) +
-  labs(
-    title = "Probabilité de récupérer tous les vrais confounders",
-    subtitle = "Méthode geo — DGP enrichi avec signaux weak / medium / strong",
-    x = expression(lambda),
-    y = "P(tous les confounders sélectionnés)",
-    color = "Scénario (n, p)"
-  ) +
-  theme_minimal(base_size = 13)
-
-print(g)
-
-ggsave(
-  "graph_rich_DGP_geo.png",
-  plot = g,
-  width = 10,
-  height = 6,
-  dpi = 300
-)
+t0 <- Sys.time()
+test_rich(n=300, p=1000, lambda=4, B=50)
+test_rich(n=500, p=1000, lambda=4, B=50)
+cat("Temps:", round(Sys.time()-t0,1), "sec\n")
