@@ -46,16 +46,19 @@ DGP_rich <- function(
   idx_MY <- 7:9
   idx_pY <- 10:12
   idx_pM <- 13:15
+  idx_pA <- 16:20
   
   b_AY <- beta
   b_AM <- beta
   b_MY <- beta
   b_pY <- beta
   b_pM <- beta
+  b_pA <- c(0.1 , 0.2 , 0.4 , 0.6 , 0.8)
   
   eta_A <-
     X[, idx_AY, drop = FALSE] %*% b_AY +
-    X[, idx_AM, drop = FALSE] %*% b_AM
+    X[, idx_AM, drop = FALSE] %*% b_AM +
+    X[, idx_pA, drop = FALSE] %*% b_pA
   
   prob_A <- expit(as.vector(eta_A))
   A <- rbinom(n, 1, prob_A)
