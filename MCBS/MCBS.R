@@ -4,51 +4,159 @@
 library(Ball)
 library(glmnet)
 
-# ── Scores ──────────────────────────────────────────────────
 
-S1 <- function(x, Y, A) {
-  idx0 <- A==0; idx1 <- A==1
-  mean(idx0)*bcov(x[idx0], Y[idx0])^2 +
-    mean(idx1)*bcov(x[idx1], Y[idx1])^2
-}
-
-S2 <- function(x, M, A) S1(x, M, A)
-
-S3 <- function(x, Y, A, M) {
-  grps <- list(A==0&M==0, A==0&M==1, A==1&M==0, A==1&M==1)
-  out  <- 0
-  for(g in grps) {
-    if(sum(g) < 2) next
-    out <- out + mean(g)*bcov(x[g], Y[g])^2
+MCBS.cor <- function(x, y, A, M, distance = FALSE) {
+  x <- as.matrix(x)
+  y <- as.matrix(y)
+  idx00 <- which(A==0 & M==0); idx01 <- which(A==0 & M==1)
+  idx10 <- which(A==1 & M==0); idx11 <- which(A==1 & M==1)
+  p00 <- length(idx00)/length(A); p01 <- length(idx01)/length(A)
+  p10 <- length(idx10)/length(A); p11 <- length(idx11)/length(A)
+  if (distance == TRUE) {
+    MCBS.cor <-
+      p00*bcov(x[idx00,idx00], y[idx00,idx00], distance=TRUE)^2 +
+      p01*bcov(x[idx01,idx01], y[idx01,idx01], distance=TRUE)^2 +
+      p10*bcov(x[idx10,idx10], y[idx10,idx10], distance=TRUE)^2 +
+      p11*bcov(x[idx11,idx11], y[idx11,idx11], distance=TRUE)^2
+  } else {
+    MCBS.cor <-
+      p00*bcov(x[idx00,], y[idx00,])^2 +
+      p01*bcov(x[idx01,], y[idx01,])^2 +
+      p10*bcov(x[idx10,], y[idx10,])^2 +
+      p11*bcov(x[idx11,], y[idx11,])^2
   }
-  out
+  return(MCBS.cor)
 }
+
+
+Causal.cor <- function(x, y, z, distance = FALSE) {
+  x      <- as.matrix(x)
+  y      <- as.matrix(y)
+  index0 <- which(z == 0)
+  index1 <- which(z == 1)
+  alpha  <- length(index0) / length(z)
+  if (distance == TRUE) {
+    x0 <- x[index0, index0]; y0 <- y[index0, index0]
+    x1 <- x[index1, index1]; y1 <- y[index1, index1]
+    Causal.cor <- alpha*(1-alpha)*bcov(x0,y0,distance=TRUE)^2 +
+      (1-alpha)*alpha*bcov(x1,y1,distance=TRUE)^2
+  } else {
+    x0 <- x[index0, ]; y0 <- y[index0, ]
+    x1 <- x[index1, ]; y1 <- y[index1, ]
+    Causal.cor <- alpha*bcov(x0,y0)^2 + (1-alpha)*bcov(x1,y1)^2
+  }
+  return(Causal.cor)
+}
+
 
 # ── Screening ───────────────────────────────────────────────
 
 compute_scores <- function(X, Y, M, A) {
-  p <- ncol(X)
+  p  <- ncol(X)
   s1 <- s2 <- s3 <- numeric(p)
   for(j in 1:p) {
-    s1[j] <- S1(X[,j], Y, A)
-    s2[j] <- S2(X[,j], M, A)
-    s3[j] <- S3(X[,j], Y, A, M)
+    s1[j] <- Causal.cor(X[,j], Y, A)
+    s2[j] <- Causal.cor(X[,j], M, A)
+    s3[j] <- MCBS.cor(as.matrix(X[,j]), as.matrix(Y), A, M)
   }
   list(S1=s1, S2=s2, S3=s3)
 }
 
-screening_geo <- function(X, Y, M, A, k) {
-  sc <- compute_scores(X, Y, M, A)
+screening_geo <- function(sc, k) {
   order((rank(-sc$S1)*rank(-sc$S2)*rank(-sc$S3))^(1/3))[1:k]
 }
 
-screening_deux_etapes <- function(X, Y, M, A, k) {
-  sc  <- compute_scores(X, Y, M, A)
+screening_deux_etapes <- function(sc, p, k) {
   k2  <- floor(k/3); k1 <- k - k2
   top <- order(-sc$S2)[1:k2]
-  rst <- setdiff(1:ncol(X), top)
+  rst <- setdiff(1:p, top)
   geo <- order((rank(-sc$S1[rst])*rank(-sc$S3[rst]))^0.5)[1:k1]
   union(top, rst[geo])
+}
+
+# ------------------------------------------------------------
+# max-Z
+# ------------------------------------------------------------
+
+robust_z <- function(s) {
+  med <- median(s, na.rm = TRUE)
+  sc  <- mad(s, constant = 1, na.rm = TRUE)
+  
+  if (!is.finite(sc) || sc < 1e-12) {
+    sc <- sd(s, na.rm = TRUE)
+  }
+  if (!is.finite(sc) || sc < 1e-12) {
+    sc <- 1
+  }
+  
+  (s - med) / sc
+}
+
+screening_final_maxZ <- function(sc, k) {
+  z1 <- robust_z(sc$S1)
+  z2 <- robust_z(sc$S2)
+  z3 <- robust_z(sc$S3)
+  
+  score <- pmax(z1, z2, z3)
+  order(-score)[1:k]
+}
+
+
+# ------------------------------------------------------------
+# Min-rank
+# ------------------------------------------------------------
+
+screening_min_rank <- function(sc, k) {
+  r1 <- rank(-sc$S1, ties.method = "average")
+  r2 <- rank(-sc$S2, ties.method = "average")
+  r3 <- rank(-sc$S3, ties.method = "average")
+  
+  rmin <- pmin(r1, r2, r3)
+  order(rmin)[1:k]
+}
+
+
+# ------------------------------------------------------------
+# Union blocks
+# Par défaut : 30% S1, 40% S2, 30% S3
+# ------------------------------------------------------------
+
+screening_union_blocks <- function(
+    sc,
+    k,
+    w = c(S1 = 0.30, S2 = 0.40, S3 = 0.30)
+) {
+  p <- length(sc$S1)
+  
+  k1 <- floor(w["S1"] * k)
+  k2 <- floor(w["S2"] * k)
+  k3 <- k - k1 - k2
+  
+  K1 <- order(-sc$S1)[1:k1]
+  K2 <- order(-sc$S2)[1:k2]
+  K3 <- order(-sc$S3)[1:k3]
+  
+  K <- unique(c(K1, K2, K3))
+  
+  # Rang minimal pour compléter ou couper
+  r1 <- rank(-sc$S1, ties.method = "average")
+  r2 <- rank(-sc$S2, ties.method = "average")
+  r3 <- rank(-sc$S3, ties.method = "average")
+  rmin <- pmin(r1, r2, r3)
+  
+  # Si doublons => l'union est plus petite que k, on complète
+  if (length(K) < k) {
+    remaining <- setdiff(1:p, K)
+    add <- remaining[order(rmin[remaining])][1:(k - length(K))]
+    K <- c(K, add)
+  }
+  
+  # Si jamais l'union dépasse k, on coupe par min-rank
+  if (length(K) > k) {
+    K <- K[order(rmin[K])][1:k]
+  }
+  
+  K
 }
 
 # ── Estimation ──────────────────────────────────────────────
@@ -92,32 +200,28 @@ dr_est <- function(ps, X, A, Y) {
 
 CBS_mediation <- function(X, A, M, Y, k=30, alpha=0.05) {
   p  <- ncol(X); k <- min(k,p)
+  
+ 
   sc <- compute_scores(X, Y, M, A)
   
-  # Screening deux étapes
-  k2  <- floor(k/3); k1 <- k-k2
-  top <- order(-sc$S2)[1:k2]
-  rst <- setdiff(1:p, top)
-  sel <- union(top,
-               rst[order((rank(-sc$S1[rst])*rank(-sc$S3[rst]))^.5)[1:k1]])
+  # Screening
+  sel <- screening_deux_etapes(sc, p, k)
   
   Xs <- X[,sel]
   nm <- function(s) s/(max(s)+1e-10)
-  
-  # OAL + DR
-  bM    <- coef(cv.glmnet(cbind(A,M,Xs),Y,alpha=1),"lambda.min")["M",]
+  bM     <- coef(cv.glmnet(cbind(A,M,Xs),Y,alpha=1),"lambda.min")["M",]
   r_ATE  <- dr_est(oal(Xs,A,nm((sc$S1[sel]*sc$S2[sel]*sc$S3[sel])^(1/3))),Xs,A,Y)
-  r_ACDE <- dr_est(oal(Xs,A,nm(sc$S3[sel])), Xs,A,Y-bM*M)
-  
+  r_ACDE <- dr_est(oal(Xs,A,nm(sc$S3[sel])),Xs,A,Y-bM*M)
   AIE <- r_ATE["est"] - r_ACDE["est"]
   se  <- sqrt(r_ATE["se"]^2 + r_ACDE["se"]^2)
   z   <- qnorm(1-alpha/2)
-  
+  est <- c(r_ATE["est"], r_ACDE["est"], AIE)
+  se2 <- c(r_ATE["se"],  r_ACDE["se"],  se)
   data.frame(
     effet    = c("ATE","ACDE","AIE"),
-    estimate = c(r_ATE["est"], r_ACDE["est"], AIE),
-    se       = c(r_ATE["se"],  r_ACDE["se"],  se),
-    lower    = c(r_ATE["est"], r_ACDE["est"], AIE) - z*c(r_ATE["se"],r_ACDE["se"],se),
-    upper    = c(r_ATE["est"], r_ACDE["est"], AIE) + z*c(r_ATE["se"],r_ACDE["se"],se)
+    estimate = est,
+    se       = se2,
+    lower    = est - z*se2,
+    upper    = est + z*se2
   )
 }
