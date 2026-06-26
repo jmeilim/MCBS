@@ -198,30 +198,372 @@ dr_est <- function(ps, X, A, Y) {
 
 # ── Pipeline principal ───────────────────────────────────────
 
-CBS_mediation <- function(X, A, M, Y, k=30, alpha=0.05) {
-  p  <- ncol(X); k <- min(k,p)
+CBS_mediation_compare_resid <- function(X, A, M, Y, k = 30, alpha = 0.05) {
   
- 
+  p <- ncol(X)
+  
+  k <- min(k, p)
+  
+  
+  
+  nm <- function(s) s / (max(s) + 1e-10)
+  
+  z  <- qnorm(1 - alpha / 2)
+  
+  
+  
+  # Scores bruts
+  
   sc <- compute_scores(X, Y, M, A)
   
-  # Screening
-  sel <- screening_deux_etapes(sc, p, k)
   
-  Xs <- X[,sel]
-  nm <- function(s) s/(max(s)+1e-10)
-  bM     <- coef(cv.glmnet(cbind(A,M,Xs),Y,alpha=1),"lambda.min")["M",]
-  r_ATE  <- dr_est(oal(Xs,A,nm((sc$S1[sel]*sc$S2[sel]*sc$S3[sel])^(1/3))),Xs,A,Y)
-  r_ACDE <- dr_est(oal(Xs,A,nm(sc$S3[sel])),Xs,A,Y-bM*M)
-  AIE <- r_ATE["est"] - r_ACDE["est"]
-  se  <- sqrt(r_ATE["se"]^2 + r_ACDE["se"]^2)
-  z   <- qnorm(1-alpha/2)
-  est <- c(r_ATE["est"], r_ACDE["est"], AIE)
-  se2 <- c(r_ATE["se"],  r_ACDE["se"],  se)
-  data.frame(
-    effet    = c("ATE","ACDE","AIE"),
-    estimate = est,
-    se       = se2,
-    lower    = est - z*se2,
-    upper    = est + z*se2
+  
+  # ----------------------------------------------------------
+  
+  # 1. Selections brutes
+  
+  # ----------------------------------------------------------
+  
+  
+  
+  sel_2step <- screening_deux_etapes(sc, p, k)
+  
+  sel_geo   <- screening_geo(sc, k)
+  
+  sel_maxZ  <- screening_final_maxZ(sc, k)
+  
+  
+  
+  # ----------------------------------------------------------
+  
+  # 2. Selection hybride 20 + 10
+  
+  # raw = deux_etapes, resid = deux_etapes
+  
+  # ----------------------------------------------------------
+  
+  
+  
+  K20 <- screening_deux_etapes(sc, p = p, k = 20)
+  
+  
+  
+  sc_resid20 <- compute_scores_resid_from_K0(
+    
+    X = X,
+    
+    Y = Y,
+    
+    M = M,
+    
+    A = A,
+    
+    K0 = K20
+    
   )
+  
+  
+  
+  remaining20 <- setdiff(1:p, K20)
+  
+  
+  
+  Kadd20_deux <- select_from_scores_subset(
+    
+    sc = sc_resid20,
+    
+    remaining = remaining20,
+    
+    k = 10,
+    
+    method = "deux_etapes"
+    
+  )
+  
+  
+  
+  sel_hyb20_10_deux <- unique(c(K20, Kadd20_deux))[1:k]
+  
+  
+  
+  # ----------------------------------------------------------
+  
+  # 3. Selection hybride 20 + 10
+  
+  # raw = deux_etapes, resid = maxZ
+  
+  # ----------------------------------------------------------
+  
+  
+  
+  Kadd20_maxZ <- select_from_scores_subset(
+    
+    sc = sc_resid20,
+    
+    remaining = remaining20,
+    
+    k = 10,
+    
+    method = "maxZ"
+    
+  )
+  
+  
+  
+  sel_hyb20_10_maxZ <- unique(c(K20, Kadd20_maxZ))[1:k]
+  
+  
+  
+  # ----------------------------------------------------------
+  
+  # 4. Selection hybride 15 + 10 + 5
+  
+  # raw = deux_etapes, resid = deux_etapes, S2_resid
+  
+  # ----------------------------------------------------------
+  
+  
+  
+  K15 <- screening_deux_etapes(sc, p = p, k = 15)
+  
+  
+  
+  sc_resid15 <- compute_scores_resid_from_K0(
+    
+    X = X,
+    
+    Y = Y,
+    
+    M = M,
+    
+    A = A,
+    
+    K0 = K15
+    
+  )
+  
+  
+  
+  remaining15 <- setdiff(1:p, K15)
+  
+  
+  
+  K_yres_deux <- select_from_scores_subset(
+    
+    sc = sc_resid15,
+    
+    remaining = remaining15,
+    
+    k = 10,
+    
+    method = "deux_etapes"
+    
+  )
+  
+  
+  
+  remaining15_deux <- setdiff(remaining15, K_yres_deux)
+  
+  
+  
+  K_mres_deux <- select_S2_resid_subset(
+    
+    sc_resid = sc_resid15,
+    
+    remaining = remaining15_deux,
+    
+    k = 5
+    
+  )
+  
+  
+  
+  sel_hyb15_10_5_deux_S2 <- unique(
+    
+    c(K15, K_yres_deux, K_mres_deux)
+    
+  )[1:k]
+  
+  
+  
+  # ----------------------------------------------------------
+  
+  # 5. Selection hybride 15 + 10 + 5
+  
+  # raw = deux_etapes, resid = maxZ, S2_resid
+  
+  # ----------------------------------------------------------
+  
+  
+  
+  K_yres_maxZ <- select_from_scores_subset(
+    
+    sc = sc_resid15,
+    
+    remaining = remaining15,
+    
+    k = 10,
+    
+    method = "maxZ"
+    
+  )
+  
+  
+  
+  remaining15_maxZ <- setdiff(remaining15, K_yres_maxZ)
+  
+  
+  
+  K_mres_maxZ <- select_S2_resid_subset(
+    
+    sc_resid = sc_resid15,
+    
+    remaining = remaining15_maxZ,
+    
+    k = 5
+    
+  )
+  
+  
+  
+  sel_hyb15_10_5_maxZ_S2 <- unique(
+    
+    c(K15, K_yres_maxZ, K_mres_maxZ)
+    
+  )[1:k]
+  
+  
+  
+  # ----------------------------------------------------------
+  
+  # Fonction d'estimation finale
+  
+  # Elle est la meme que dans ton code
+  
+  # ----------------------------------------------------------
+  
+  
+  
+  estimer <- function(sel, label) {
+    
+    tryCatch({
+      
+      Xs <- X[, sel, drop = FALSE]
+      
+      
+      
+      bM <- coef(
+        
+        cv.glmnet(cbind(A, M, Xs), Y, alpha = 1),
+        
+        "lambda.min"
+        
+      )["M", ]
+      
+      
+      
+      r_ATE <- dr_est(
+        
+        oal(
+          
+          Xs,
+          
+          A,
+          
+          nm((sc$S1[sel] * sc$S2[sel] * sc$S3[sel])^(1 / 3))
+          
+        ),
+        
+        Xs,
+        
+        A,
+        
+        Y
+        
+      )
+      
+      
+      
+      r_ACDE <- dr_est(
+        
+        oal(
+          
+          Xs,
+          
+          A,
+          
+          nm(sc$S3[sel])
+          
+        ),
+        
+        Xs,
+        
+        A,
+        
+        Y - bM * M
+        
+      )
+      
+      
+      
+      AIE <- r_ATE["est"] - r_ACDE["est"]
+      
+      se  <- sqrt(r_ATE["se"]^2 + r_ACDE["se"]^2)
+      
+      
+      
+      est <- c(r_ATE["est"], r_ACDE["est"], AIE)
+      
+      se2 <- c(r_ATE["se"],  r_ACDE["se"],  se)
+      
+      
+      
+      data.frame(
+        
+        effet    = c("ATE", "ACDE", "AIE"),
+        
+        estimate = est,
+        
+        se       = se2,
+        
+        lower    = est - z * se2,
+        
+        upper    = est + z * se2
+        
+      )
+      
+    }, error = function(e) {
+      
+      cat("ERREUR dans", label, ":", e$message, "\n")
+      
+      NULL
+      
+    })
+    
+  }
+  
+  
+  
+  list(
+    
+    deux_etapes = estimer(sel_2step, "deux_etapes"),
+    
+    geo = estimer(sel_geo, "geo"),
+    
+    maxZ = estimer(sel_maxZ, "maxZ"),
+    
+    
+    
+    hyb20_10_deux = estimer(sel_hyb20_10_deux, "hyb20_10_deux"),
+    
+    hyb20_10_maxZ = estimer(sel_hyb20_10_maxZ, "hyb20_10_maxZ"),
+    
+    
+    
+    hyb15_10_5_deux_S2 = estimer(sel_hyb15_10_5_deux_S2, "hyb15_10_5_deux_S2"),
+    
+    hyb15_10_5_maxZ_S2 = estimer(sel_hyb15_10_5_maxZ_S2, "hyb15_10_5_maxZ_S2")
+    
+  )
+  
 }

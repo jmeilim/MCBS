@@ -1,19 +1,19 @@
-source("MCBS/MCBS.R")
-source("MCBS/DGP.R")  
-
 # ============================================================
-# COMPARAISON RAPIDE CIBLÉE
-# raw30 vs hybrid 20-10 vs hybrid 15-10-5
-# n = 300, p = 1000, lambda = 4, B = 100, k = 30
+# 10 geo13 raw + 10 S2 raw + 10 geo13 residualized Y
+# B = 100 Monte Carlo
 # ============================================================
 
-# ------------------------------------------------------------
-# 0. Utilitaires
-# ------------------------------------------------------------
+# Suppose déjà définis :
+# DGP_rich
+# compute_scores
+# Causal.cor
+# MCBS.cor
 
+# ============================================================
+# 1. Résidu simple de Y
+# ============================================================
 
-
-safe_lm_resid <- function(y, Z) {
+resid_lm <- function(y, Z) {
   Z <- as.data.frame(Z)
   df <- data.frame(y = y, Z)
   
@@ -26,419 +26,233 @@ safe_lm_resid <- function(y, Z) {
     return(y - mean(y))
   }
   
-  resid(fit)
+  as.numeric(resid(fit))
 }
 
-safe_glm_resid <- function(y, Z) {
-  Z <- as.data.frame(Z)
-  df <- data.frame(y = y, Z)
-  
-  fit <- tryCatch(
-    suppressWarnings(glm(y ~ ., data = df, family = binomial())),
-    error = function(e) NULL
-  )
-  
-  if (is.null(fit)) {
-    return(y - mean(y))
-  }
-  
-  phat <- fitted(fit)
-  phat <- pmin(pmax(phat, 1e-4), 1 - 1e-4)
-  
-  y - phat
-}
+# ============================================================
+# 2. Scores après résidualisation de Y seulement
+# ============================================================
 
-# ------------------------------------------------------------
-# 1. Scores résidualisés depuis K0
-# ------------------------------------------------------------
-
-compute_scores_resid_from_K0 <- function(X, Y, M, A, K0) {
+compute_scores_resid_Yonly <- function(X, A, M, Y, K) {
   p <- ncol(X)
   
-  if (length(K0) == 0) {
-    Y_res <- Y
-    M_res <- M
-  } else {
-    ZY <- cbind(A = A, M = M, X[, K0, drop = FALSE])
-    ZM <- cbind(A = A, X[, K0, drop = FALSE])
-    
-    Y_res <- safe_lm_resid(Y, ZY)
-    M_res <- safe_glm_resid(M, ZM)
-  }
+  Yres <- resid_lm(
+    Y,
+    cbind(A = A, M = M, X[, K, drop = FALSE])
+  )
   
-  s1 <- s2 <- s3 <- numeric(p)
+  S1 <- S2 <- S3 <- numeric(p)
   
   for (j in 1:p) {
-    s1[j] <- Causal.cor(X[, j], Y_res, A)
-    s2[j] <- Causal.cor(X[, j], M_res, A)
-    s3[j] <- MCBS.cor(as.matrix(X[, j]), as.matrix(Y_res), A, M)
+    S1[j] <- Causal.cor(X[, j], Yres, A)
+    S2[j] <- Causal.cor(X[, j], M, A)  # M brut, pas de résidualisation
+    S3[j] <- MCBS.cor(as.matrix(X[, j]), as.matrix(Yres), A, M)
   }
   
-  list(S1 = s1, S2 = s2, S3 = s3)
+  list(S1 = S1, S2 = S2, S3 = S3)
 }
 
-# ------------------------------------------------------------
-# 2. Sélection sur sous-ensemble de variables
-# ------------------------------------------------------------
+# ============================================================
+# 3. Ranking geo13 = geo(S1,S3)
+# ============================================================
 
-select_from_scores_subset <- function(sc, remaining, k, method) {
-  if (k <= 0) return(integer(0))
+order_geo13 <- function(sc, candidates) {
+  r1 <- rank(-sc$S1[candidates], ties.method = "average")
+  r3 <- rank(-sc$S3[candidates], ties.method = "average")
   
-  sc_sub <- list(
-    S1 = sc$S1[remaining],
-    S2 = sc$S2[remaining],
-    S3 = sc$S3[remaining]
-  )
+  score <- sqrt(r1 * r3)
   
-  if (method == "geo") {
-    local <- screening_geo(sc_sub, k = k)
-  } else if (method == "deux_etapes") {
-    local <- screening_deux_etapes(sc_sub, p = length(remaining), k = k)
-  } else if (method == "maxZ") {
-    local <- screening_final_maxZ(sc_sub, k = k)
-  } else {
-    stop("Unknown method: ", method)
-  }
-  
-  remaining[local]
+  candidates[order(score)]
 }
 
-select_S2_resid_subset <- function(sc_resid, remaining, k) {
-  if (k <= 0) return(integer(0))
-  
-  s2 <- sc_resid$S2[remaining]
-  remaining[order(-s2)[1:k]]
+make_rank <- function(ord, p) {
+  rk <- rep(NA, p)
+  rk[ord] <- seq_along(ord)
+  rk
 }
 
-# ------------------------------------------------------------
-# 3. Évaluation globale
-# ------------------------------------------------------------
+# ============================================================
+# 4. Paramètres Monte Carlo
+# ============================================================
 
-eval_selection_global <- function(selected, dgp) {
-  info <- dgp$variable_info
-  
-  conf <- dgp$true_confounders
-  active <- dgp$true_signals
-  
-  AY <- info$variable[info$type == "AY"]
-  AM <- info$variable[info$type == "AM"]
-  MY <- info$variable[info$type == "MY"]
-  pY <- info$variable[info$type == "pY"]
-  pM <- info$variable[info$type == "pM"]
-  
-  weak_active <- info$variable[info$level == "weak"]
-  medium_active <- info$variable[info$level == "medium"]
-  strong_active <- info$variable[info$level == "strong"]
-  
-  weak_conf <- info$variable[
-    info$level == "weak" & info$type %in% c("AY", "AM", "MY")
-  ]
-  
-  data.frame(
-    n_active = sum(active %in% selected),
-    n_confounders = sum(conf %in% selected),
-    
-    prop_active = sum(active %in% selected) / length(active),
-    prop_confounders = sum(conf %in% selected) / length(conf),
-    
-    prop_AY = sum(AY %in% selected) / length(AY),
-    prop_AM = sum(AM %in% selected) / length(AM),
-    prop_MY = sum(MY %in% selected) / length(MY),
-    prop_pY = sum(pY %in% selected) / length(pY),
-    prop_pM = sum(pM %in% selected) / length(pM),
-    
-    prop_weak_active = sum(weak_active %in% selected) / length(weak_active),
-    prop_medium_active = sum(medium_active %in% selected) / length(medium_active),
-    prop_strong_active = sum(strong_active %in% selected) / length(strong_active),
-    
-    prop_weak_conf = sum(weak_conf %in% selected) / length(weak_conf),
-    
-    all_active = as.numeric(all(active %in% selected)),
-    all_confounders = as.numeric(all(conf %in% selected))
-  )
-}
+set.seed(42)
 
-eval_selection_by_var <- function(selected, dgp) {
-  info <- dgp$variable_info
-  
-  data.frame(
-    variable = info$variable,
-    type = info$type,
-    level = info$level,
-    beta = info$beta,
-    selected = as.numeric(info$variable %in% selected)
-  )
-}
+B <- 100
+n <- 300
+p <- 1000
+lambda <- 4
 
-# ------------------------------------------------------------
-# 4. Simulation rapide ciblée
-# ------------------------------------------------------------
+k_raw_Y <- 10
+k_raw_M <- 10
+k_res_Y <- 10
 
-compare_fast_targeted <- function(
-    B = 100,
-    n = 600,
-    p = 2000,
-    lambda = 4,
-    seed = 123,
-    verbose = TRUE
-) {
-  set.seed(seed)
+res <- data.frame()
+
+# ============================================================
+# 5. Boucle Monte Carlo
+# ============================================================
+
+for (b in 1:B) {
   
-  global_results <- list()
-  var_results <- list()
+  cat("Run", b, "/", B, "\n")
   
-  for (b in 1:B) {
-    if (verbose) {
-      cat("Run", b, "/", B, "\n")
-    }
+  out <- tryCatch({
     
-    dgp <- DGP_rich(n = n, p = p, lambda = lambda)
+    dat <- DGP_rich(n, p, lambda = lambda)
     
-    # Scores bruts calculés une seule fois
-    sc_raw <- compute_scores(dgp$X, dgp$Y, dgp$M, dgp$A)
+    X <- dat$X
+    A <- dat$A
+    M <- dat$M
+    Y <- dat$Y
     
-    selections <- list()
+    true_active <- dat$true_signals
+    true_conf <- dat$true_confounders
+    noise_vars <- setdiff(1:p, true_active)
+    info <- dat$variable_info
     
-    # --------------------------------------------------------
-    # A. Baselines raw k = 30
-    # --------------------------------------------------------
+    # ----------------------------
+    # Scores raw
+    # ----------------------------
     
-    selections[["raw30_deux_etapes"]] <- screening_deux_etapes(sc_raw, p = p, k = 30)
-    selections[["raw30_geo"]] <- screening_geo(sc_raw, k = 30)
-    selections[["raw30_maxZ"]] <- screening_final_maxZ(sc_raw, k = 30)
+    sc_raw <- compute_scores(X, Y, M, A)
     
-    # --------------------------------------------------------
-    # B. Hybrid 20 + 10
-    # raw = deux_etapes
-    # resid = maxZ / deux_etapes
-    # --------------------------------------------------------
+    # ----------------------------
+    # Stage 1 : top 10 geo13 raw
+    # ----------------------------
     
-    K20 <- screening_deux_etapes(sc_raw, p = p, k = 20)
+    ord_geo13_raw_all <- order_geo13(sc_raw, 1:p)
+    K1 <- ord_geo13_raw_all[1:k_raw_Y]
     
-    sc_resid20 <- compute_scores_resid_from_K0(
-      X = dgp$X,
-      Y = dgp$Y,
-      M = dgp$M,
-      A = dgp$A,
-      K0 = K20
-    )
+    remaining1 <- setdiff(1:p, K1)
     
-    remaining20 <- setdiff(1:p, K20)
+    # Rang Y raw dans remaining1
+    ord_Y_raw_R1 <- order_geo13(sc_raw, remaining1)
+    rank_Y_raw_R1 <- make_rank(ord_Y_raw_R1, p)
     
-    Kadd20_maxZ <- select_from_scores_subset(
-      sc = sc_resid20,
-      remaining = remaining20,
-      k = 10,
-      method = "maxZ"
-    )
+    # Rang S2 raw dans remaining1
+    ord_S2_R1 <- remaining1[order(-sc_raw$S2[remaining1])]
+    rank_S2_R1 <- make_rank(ord_S2_R1, p)
     
-    selections[["hyb20_10_deux_maxZ"]] <- unique(c(K20, Kadd20_maxZ))[1:30]
+    # ----------------------------
+    # Stage 2 : top 10 S2 raw
+    # ----------------------------
     
-    Kadd20_deux <- select_from_scores_subset(
-      sc = sc_resid20,
-      remaining = remaining20,
-      k = 10,
-      method = "deux_etapes"
-    )
+    K2 <- ord_S2_R1[1:k_raw_M]
     
-    selections[["hyb20_10_deux_deux"]] <- unique(c(K20, Kadd20_deux))[1:30]
+    remaining2 <- setdiff(remaining1, K2)
     
-    # --------------------------------------------------------
-    # C. Hybrid 15 + 10 + 5
-    # raw = deux_etapes
-    # yres = maxZ / deux_etapes
-    # mres = S2_resid
-    # --------------------------------------------------------
+    # Rang S2 après avoir retiré K2
+    ord_S2_R2 <- remaining2[order(-sc_raw$S2[remaining2])]
+    rank_S2_R2 <- make_rank(ord_S2_R2, p)
     
-    K15 <- screening_deux_etapes(sc_raw, p = p, k = 15)
+    # ----------------------------
+    # Stage 3 : résidualiser Y sur A,M,K1,K2
+    # puis top 10 geo13 resid
+    # ----------------------------
     
-    sc_resid15 <- compute_scores_resid_from_K0(
-      X = dgp$X,
-      Y = dgp$Y,
-      M = dgp$M,
-      A = dgp$A,
-      K0 = K15
-    )
+    K12 <- unique(c(K1, K2))
     
-    remaining15 <- setdiff(1:p, K15)
+    sc_res <- compute_scores_resid_Yonly(X, A, M, Y, K12)
     
-    # 15 + 10 maxZ + 5 S2
-    K_yres_maxZ <- select_from_scores_subset(
-      sc = sc_resid15,
-      remaining = remaining15,
-      k = 10,
-      method = "maxZ"
-    )
+    ord_Y_res_R2 <- order_geo13(sc_res, remaining2)
+    rank_Y_res_R2 <- make_rank(ord_Y_res_R2, p)
     
-    remaining15_maxZ <- setdiff(remaining15, K_yres_maxZ)
+    K3 <- ord_Y_res_R2[1:k_res_Y]
     
-    K_mres_maxZ <- select_S2_resid_subset(
-      sc_resid = sc_resid15,
-      remaining = remaining15_maxZ,
-      k = 5
-    )
+    Kfinal <- unique(c(K1, K2, K3))
     
-    selections[["hyb15_10_5_deux_maxZ_S2"]] <- unique(
-      c(K15, K_yres_maxZ, K_mres_maxZ)
-    )[1:30]
+    # ----------------------------
+    # Stockage
+    # ----------------------------
     
-    # 15 + 10 deux_etapes + 5 S2
-    K_yres_deux <- select_from_scores_subset(
-      sc = sc_resid15,
-      remaining = remaining15,
-      k = 10,
-      method = "deux_etapes"
-    )
+    tmp <- data.frame()
     
-    remaining15_deux <- setdiff(remaining15, K_yres_deux)
-    
-    K_mres_deux <- select_S2_resid_subset(
-      sc_resid = sc_resid15,
-      remaining = remaining15_deux,
-      k = 5
-    )
-    
-    selections[["hyb15_10_5_deux_deux_S2"]] <- unique(
-      c(K15, K_yres_deux, K_mres_deux)
-    )[1:30]
-    
-    # --------------------------------------------------------
-    # Évaluation
-    # --------------------------------------------------------
-    
-    for (m in names(selections)) {
-      global_results[[length(global_results) + 1]] <- cbind(
-        run = b,
-        method = m,
-        lambda = lambda,
-        k = 30,
-        eval_selection_global(selections[[m]], dgp)
-      )
+    for (j in true_active) {
       
-      var_results[[length(var_results) + 1]] <- cbind(
-        run = b,
-        method = m,
-        lambda = lambda,
-        k = 30,
-        eval_selection_by_var(selections[[m]], dgp)
+      type_j <- info$type[info$variable == j]
+      level_j <- info$level[info$variable == j]
+      beta_j <- info$beta[info$variable == j]
+      
+      selected_geo13_raw <- j %in% K1
+      selected_s2_raw <- j %in% K2
+      selected_geo13_resid <- j %in% K3
+      selected_final <- j %in% Kfinal
+      
+      # Rang outcome Y : seulement si la variable n'est pas déjà prise avant resid
+      if (selected_geo13_raw || selected_s2_raw) {
+        rank_Y_raw <- NA
+        rank_Y_resid <- NA
+        rank_Y_gain <- NA
+        noise_Y_raw <- NA
+        noise_Y_resid <- NA
+        noise_Y_gain <- NA
+      } else {
+        rank_Y_raw <- rank_Y_raw_R1[j]
+        rank_Y_resid <- rank_Y_res_R2[j]
+        rank_Y_gain <- rank_Y_raw - rank_Y_resid
+        
+        noise_R2 <- intersect(noise_vars, remaining2)
+        
+        noise_Y_raw <- sum(rank_Y_raw_R1[noise_R2] < rank_Y_raw, na.rm = TRUE)
+        noise_Y_resid <- sum(rank_Y_res_R2[noise_R2] < rank_Y_resid, na.rm = TRUE)
+        noise_Y_gain <- noise_Y_raw - noise_Y_resid
+      }
+      
+      # Rang S2 : score naturel pour AM/pM
+      if (selected_geo13_raw) {
+        rank_S2_before <- NA
+        noise_S2_before <- NA
+      } else {
+        rank_S2_before <- rank_S2_R1[j]
+        
+        noise_R1 <- intersect(noise_vars, remaining1)
+        
+        noise_S2_before <- sum(rank_S2_R1[noise_R1] < rank_S2_before,
+                               na.rm = TRUE)
+      }
+      
+      tmp <- rbind(
+        tmp,
+        data.frame(
+          run = b,
+          variable = j,
+          type = type_j,
+          level = level_j,
+          beta = beta_j,
+          is_confounder = j %in% true_conf,
+          
+          selected_geo13_raw = selected_geo13_raw,
+          selected_s2_raw = selected_s2_raw,
+          selected_geo13_resid = selected_geo13_resid,
+          selected_final = selected_final,
+          
+          rank_Y_raw = rank_Y_raw,
+          rank_Y_resid = rank_Y_resid,
+          rank_Y_gain = rank_Y_gain,
+          noise_Y_raw = noise_Y_raw,
+          noise_Y_resid = noise_Y_resid,
+          noise_Y_gain = noise_Y_gain,
+          
+          rank_S2_before = rank_S2_before,
+          noise_S2_before = noise_S2_before
+        )
       )
     }
+    
+    tmp
+    
+  }, error = function(e) {
+    cat("Erreur run", b, ":", e$message, "\n")
+    NULL
+  })
+  
+  if (!is.null(out)) {
+    res <- rbind(res, out)
   }
-  
-  list(
-    global = do.call(rbind, global_results),
-    by_var = do.call(rbind, var_results)
-  )
 }
 
-# ------------------------------------------------------------
-# 5. Summaries
-# ------------------------------------------------------------
+# ============================================================
+# Résultat brut run par run
+# ============================================================
 
-make_fast_summary <- function(res) {
-  main_summary <- aggregate(
-    cbind(
-      prop_active,
-      prop_confounders,
-      prop_AY,
-      prop_AM,
-      prop_MY,
-      prop_pY,
-      prop_pM,
-      prop_weak_active,
-      prop_medium_active,
-      prop_strong_active,
-      prop_weak_conf,
-      n_active,
-      n_confounders
-    ) ~ method,
-    data = res$global,
-    FUN = mean
-  )
-  
-  main_summary <- main_summary[order(-main_summary$prop_active), ]
-  
-  type_summary <- aggregate(
-    selected ~ method + type,
-    data = res$by_var,
-    FUN = mean
-  )
-  
-  type_summary <- type_summary[order(type_summary$type, -type_summary$selected), ]
-  
-  level_summary <- aggregate(
-    selected ~ method + level,
-    data = res$by_var,
-    FUN = mean
-  )
-  
-  level_summary <- level_summary[order(level_summary$level, -level_summary$selected), ]
-  
-  type_level_summary <- aggregate(
-    selected ~ method + type + level,
-    data = res$by_var,
-    FUN = mean
-  )
-  
-  weak_conf_summary <- subset(
-    type_level_summary,
-    type %in% c("AY", "AM", "MY") & level == "weak"
-  )
-  
-  weak_conf_summary <- weak_conf_summary[
-    order(weak_conf_summary$type, -weak_conf_summary$selected),
-  ]
-  
-  list(
-    main = main_summary,
-    type = type_summary,
-    level = level_summary,
-    type_level = type_level_summary,
-    weak_conf = weak_conf_summary
-  )
-}
-
-round_numeric_df <- function(df, digits = 3) {
-  num_cols <- sapply(df, is.numeric)
-  df[num_cols] <- lapply(df[num_cols], function(x) round(x, digits))
-  df
-}
-
-print_fast_summary <- function(summ, digits = 3) {
-  cat("\n============================================================\n")
-  cat("1. Résumé principal\n")
-  cat("============================================================\n")
-  print(round_numeric_df(summ$main, digits), row.names = FALSE)
-  
-  cat("\n============================================================\n")
-  cat("2. Résumé par type\n")
-  cat("============================================================\n")
-  print(round_numeric_df(summ$type, digits), row.names = FALSE)
-  
-  cat("\n============================================================\n")
-  cat("3. Résumé par niveau\n")
-  cat("============================================================\n")
-  print(round_numeric_df(summ$level, digits), row.names = FALSE)
-  
-  cat("\n============================================================\n")
-  cat("4. Focus — confondeurs faibles\n")
-  cat("============================================================\n")
-  print(round_numeric_df(summ$weak_conf, digits), row.names = FALSE)
-}
-
-# ------------------------------------------------------------
-# 6. Lancement
-# ------------------------------------------------------------
-
-res_fast <- compare_fast_targeted(
-  B = 100,
-  n = 600,
-  p = 2000,
-  lambda = 4,
-  seed = 123,
-  verbose = TRUE
-)
-
-summ_fast <- make_fast_summary(res_fast)
-
-print_fast_summary(summ_fast, digits = 3)
+print(head(res))
