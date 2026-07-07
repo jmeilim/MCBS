@@ -112,3 +112,58 @@ DGP_rich <- function(
   ))
 }
 
+DGP_four_signals_corr <- function(n, p, rho_x = 0.25, noise_sd = 0.3) {
+  
+  common_factor <- rnorm(n)
+  E <- matrix(rnorm(n * p), nrow = n, ncol = p)
+  X <- sqrt(rho_x) * common_factor + sqrt(1 - rho_x) * E
+  
+  expit <- function(x) {
+    1 / (1 + exp(-x))
+  }
+  
+  # Variables actives
+  AY_weak   <- X[, 1]
+  AY_strong <- X[, 2]
+  MY_weak   <- X[, 3]
+  MY_strong <- X[, 4]
+  
+  # Traitement : dépend des AY
+  prob_A <- expit(0.1 * AY_weak + 1.0 * AY_strong)
+  A <- rbinom(n, 1, prob_A)
+  
+  # Médiateur simple : dépend seulement de A
+  prob_M <- expit(1.0 * A)
+  M <- rbinom(n, 1, prob_M)
+  
+  # Outcome : dépend de A, M, AY, MY
+  eps <- rnorm(n, 0, 0.3)
+  
+  Y <- 1.5 * A +
+    2.0 * M +
+    0.12 * AY_weak +
+    1.0 * AY_strong +
+    0.1 * MY_weak +
+    1.0 * MY_strong +
+    eps
+  
+  true_signals <- c(1, 2, 3, 4)
+  true_confounders <- c(1, 2, 3, 4)
+  
+  variable_info <- data.frame(
+    variable = c(1, 2, 3, 4),
+    type = c("AY", "AY", "MY", "MY"),
+    level = c("weak", "strong", "weak", "strong"),
+    beta = c(0.1, 1.0, 0.1, 1.0)
+  )
+  
+  list(
+    X = X,
+    A = A,
+    M = M,
+    Y = Y,
+    true_signals = true_signals,
+    true_confounders = true_confounders,
+    variable_info = variable_info
+  )
+}
