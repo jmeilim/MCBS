@@ -112,49 +112,98 @@ DGP_rich <- function(
   ))
 }
 
-DGP_four_signals_corr <- function(n, p, rho_x = 0.25, noise_sd = 0.3) {
+
   
-  common_factor <- rnorm(n)
-  E <- matrix(rnorm(n * p), nrow = n, ncol = p)
-  X <- sqrt(rho_x) * common_factor + sqrt(1 - rho_x) * E
-  
+DGP_four_signals_corr<- function(n, p, rho_x = 0, noise_sd = 0.3) {
+    
   expit <- function(x) {
     1 / (1 + exp(-x))
   }
   
-  # Variables actives
-  AY_weak   <- X[, 1]
-  AY_strong <- X[, 2]
-  MY_weak   <- X[, 3]
-  MY_strong <- X[, 4]
+  # ============================================================
+  # Coefficients définis une seule fois
+  # ============================================================
   
-  # Traitement : dépend des AY
-  prob_A <- expit(0.1 * AY_weak + 1.0 * AY_strong)
+  beta_AY <- c(
+    weak   = 0.05,
+    strong = 1.00
+  )
+  
+  beta_MY <- c(
+    weak   = 0.15,
+    strong = 1.00
+  )
+  
+  beta_A_to_Y <- 1.5
+  beta_M_to_Y <- 2.0
+  beta_A_to_M <- 1.0
+  
+  # ============================================================
+  # Génération de X avec corrélation rho_x
+  # ============================================================
+  
+  common_factor <- rnorm(n)
+  E <- matrix(rnorm(n * p), nrow = n, ncol = p)
+  
+  X <- sqrt(rho_x) * common_factor + sqrt(1 - rho_x) * E
+  
+  # ============================================================
+  # Variables actives
+  # ============================================================
+  
+  AY_vars <- 1:2
+  MY_vars <- 3:4
+  
+  AY <- X[, AY_vars, drop = FALSE]
+  MY <- X[, MY_vars, drop = FALSE]
+  
+  colnames(AY) <- names(beta_AY)
+  colnames(MY) <- names(beta_MY)
+  
+  # ============================================================
+  # Traitement A : AY agit sur A
+  # ============================================================
+  
+  eta_A <- AY %*% beta_AY
+  
+  prob_A <- expit(eta_A)
   A <- rbinom(n, 1, prob_A)
   
-  # Médiateur simple : dépend seulement de A
-  prob_M <- expit(1.0 * A)
+  # ============================================================
+  # Médiateur M : MY agit sur M
+  # ============================================================
+  
+  eta_M <- beta_A_to_M * A + MY %*% beta_MY
+  
+  prob_M <- expit(eta_M)
   M <- rbinom(n, 1, prob_M)
   
-  # Outcome : dépend de A, M, AY, MY
-  eps <- rnorm(n, 0, 0.3)
+  # ============================================================
+  # Outcome Y : AY et MY agissent sur Y
+  # ============================================================
   
-  Y <- 1.5 * A +
-    2.0 * M +
-    0.12 * AY_weak +
-    1.0 * AY_strong +
-    0.1 * MY_weak +
-    1.0 * MY_strong +
+  eps <- rnorm(n, 0, noise_sd)
+  
+  Y <- beta_A_to_Y * A +
+    beta_M_to_Y * M +
+    AY %*% beta_AY +
+    MY %*% beta_MY +
     eps
   
-  true_signals <- c(1, 2, 3, 4)
-  true_confounders <- c(1, 2, 3, 4)
+  Y <- as.numeric(Y)
+  
+  # ============================================================
+  # Informations sur les vraies variables
+  # ============================================================
+  
+  true_signals <- c(AY_vars, MY_vars)
+  true_confounders <- true_signals
   
   variable_info <- data.frame(
-    variable = c(1, 2, 3, 4),
-    type = c("AY", "AY", "MY", "MY"),
-    level = c("weak", "strong", "weak", "strong"),
-    beta = c(0.1, 1.0, 0.1, 1.0)
+    variable = true_signals,
+    type = c(rep("AY", length(beta_AY)), rep("MY", length(beta_MY))),
+    level = c(names(beta_AY), names(beta_MY)),
+    beta = c(beta_AY, beta_MY)
   )
   
   list(

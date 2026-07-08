@@ -76,9 +76,8 @@ n <- 100
 p <- 1000
 lambda <- 4
 
-k_raw_Y <- 10
-k_raw_M <- 10
-k_res_Y <- 10
+k1 <- 5
+k2 <- 15
 
 res <- data.frame()
 
@@ -108,63 +107,53 @@ median_na <- function(x) {
 
 one_run <- function(b) {
   
-  dat <- DGP_four_signals_corr(n, p, rho_x = 0, noise_sd = 0.3)
+  dat <- DGP_four_signals_corr(n, p, rho_x = 0, noise_sd = 0.3 )
   
   X <- dat$X
   A <- dat$A
   M <- dat$M
   Y <- dat$Y
   
-  true_active <- dat$true_signals
   info <- dat$variable_info
+  true_signals <- dat$true_signals
   
-  # garder seulement les signaux liés à Y
-  true_Y <- true_active[info$type[match(true_active, info$variable)] %in% c("AY", "MY", "pY")]
-  
-  # ----------------------------
-  # Scores brutes 
-  # ----------------------------
+  # ============================================================
+  # Stage 1 : geo13 raw
+  # ============================================================
   
   sc_raw <- compute_scores(X, Y, M, A)
   
-  # ----------------------------
-  # Stage 1 : geo13 raw
-  # ----------------------------
+  ord_stage1 <- order_geo13(sc_raw, 1:p)
+  rank_stage1 <- make_rank(ord_stage1, p)
   
-  ord_geo13_raw <- order_geo13(sc_raw, 1:p)
-  rank_geo13_raw <- make_rank(ord_geo13_raw, p)
+  K1 <- ord_stage1[1:k1]
   
-  K1 <- ord_geo13_raw[1:k_raw_Y]
+  # ============================================================
+  # Stage 2 : geo13 après résidualisation sur K1
+  # ============================================================
   
   remaining1 <- setdiff(1:p, K1)
   
-  # --------------------------
-  # Stage 2 : S2 raw
-  # -------------------------
+  sc_res <- compute_scores_resid_Yonly(X, A, M, Y, K1)
   
-  ord_S2 <- remaining1[order(-sc_raw$S2[remaining1])]
-  K2 <- ord_S2[1:k_raw_M]
+  ord_stage2 <- order_geo13(sc_res, remaining1)
+  rank_stage2 <- make_rank(ord_stage2, p)
   
-  remaining2 <- setdiff(remaining1, K2)
+  K2 <- ord_stage2[1:k2]
   
-  # --------------------------
-  # Stage 3 : geo13 résiduel
-  # ----------------------------
+  # ============================================================
+  # Ensemble final
+  # ============================================================
   
-  K12 <- unique(c(K1, K2))
+  K_final <- unique(c(K1, K2))
   
-  sc_res <- compute_scores_resid_Yonly(X, A, M, Y, K12)
-  
-  ord_geo13_resid <- order_geo13(sc_res, remaining2)
-  rank_geo13_resid <- make_rank(ord_geo13_resid, p)
-  
-  # ----------------------------
-  # Stockage des rangs 
-  # --------------------------
+  # ============================================================
+  # Résultats pour les vraies variables
+  # ============================================================
   
   tmp <- data.frame()
   
-  for (j in true_Y) {
+  for (j in true_signals) {
     
     type_j <- info$type[info$variable == j]
     level_j <- info$level[info$variable == j]
@@ -172,14 +161,7 @@ one_run <- function(b) {
     
     selected_stage1 <- j %in% K1
     selected_stage2 <- j %in% K2
-    
-    rank_raw <- rank_geo13_raw[j]
-    
-    if (selected_stage1 || selected_stage2) {
-      rank_resid <- NA
-    } else {
-      rank_resid <- rank_geo13_resid[j]
-    }
+    selected_final <- j %in% K_final
     
     tmp <- rbind(
       tmp,
@@ -189,13 +171,18 @@ one_run <- function(b) {
         type = type_j,
         level = level_j,
         beta = beta_j,
-        rank_raw = rank_raw,
-        rank_resid = rank_resid
+        
+        selected_stage1 = selected_stage1,
+        selected_stage2 = selected_stage2,
+        selected_final = selected_final,
+        
+        rank_stage1 = rank_stage1[j],
+        rank_stage2 = ifelse(selected_stage1, NA, rank_stage2[j])
       )
     )
   }
   
-  tmp
+  return(tmp)
 }
 
 # ============================================================
@@ -225,24 +212,41 @@ for (b in 1:B) {
 
 library(dplyr)
 
-summary_ranks <- res %>%
+mean_na <- function(x) {
+  if (all(is.na(x))) NA_real_ else mean(x, na.rm = TRUE)
+}
+
+summary_mean <- res %>%
   group_by(variable, type, level, beta) %>%
   summarise(
-    mean_rank_raw = mean_na(rank_raw),
-    mean_rank_resid = mean_na(rank_resid),
+    mean_rank_stage1 = mean_na(rank_stage1),
+    mean_rank_stage2 = mean_na(rank_stage2),
+    
+    p_stage1 = mean(selected_stage1),
+    p_stage2 = mean(selected_stage2),
+    p_final = mean(selected_final),
+    
     .groups = "drop"
   ) %>%
   arrange(type, beta)
 
-print(summary_ranks, width = Inf)
+print(summary_mean, width = Inf)
+median_na <- function(x) {
+  if (all(is.na(x))) NA_real_ else median(x, na.rm = TRUE)
+}
 
-summary_ranks <- res %>%
+summary_median <- res %>%
   group_by(variable, type, level, beta) %>%
   summarise(
-    mean_rank_raw = median_na(rank_raw),
-    mean_rank_resid = median_na(rank_resid),
+    median_rank_stage1 = median_na(rank_stage1),
+    median_rank_stage2 = median_na(rank_stage2),
+    
+    p_stage1 = mean(selected_stage1),
+    p_stage2 = mean(selected_stage2),
+    p_final = mean(selected_final),
+    
     .groups = "drop"
   ) %>%
   arrange(type, beta)
 
-print(summary_ranks, width = Inf)
+print(summary_median, width = Inf)
