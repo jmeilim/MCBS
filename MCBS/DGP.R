@@ -1,10 +1,74 @@
 # data generation process
-
+library(MASS)
 
 expit <- function(x) {
   exp(x) / (1 + exp(x))
 }
 
+
+
+
+expit <- function(x) 1 / (1 + exp(-x))
+
+DGP_oal_total <- function(n, p, rho_x = 0, sig_e = 0.001, bA = 1,
+                          beta_strong = 1.5, beta_weak = 1,
+                          alpha_conf = 1.0, alpha_instr = 1.0) {
+  
+  # -- 6 covariees non-bruit, 2 par role, comme OAL
+  pC <- 2  # confondeurs FORTS   : Xc (beta fort, alpha fort)
+  pP <- 2  # confondeurs FAIBLES : Xp (beta faible, alpha fort)  <- domination
+  pI <- 2  # instruments         : Xi (beta = 0,   alpha fort)
+  pS <- p - (pC + pP + pI)
+  
+  # -- coefficients
+  beta_v  <- c(rep(beta_strong, pC),
+               rep(beta_weak,   pP),
+               rep(0,           pI),
+               rep(0,           pS))
+  
+  alpha_v <- c(rep(alpha_conf,  pC),
+               rep(alpha_conf,  pP),
+               rep(alpha_instr, pI),
+               rep(0,           pS))
+  
+  # -- X ~ N(0, Sigma) compound symmetry (rho_x hors diagonale)
+  Sigma <- matrix(rho_x, nrow = p, ncol = p)
+  diag(Sigma) <- 1
+  X <- MASS::mvrnorm(n = n, mu = rep(0, p), Sigma = Sigma)
+  
+  # -- traitement
+  pA <- expit(as.vector(X %*% alpha_v))
+  A  <- rbinom(n, 1, pA)
+  
+  # -- outcome (effet total seul, PAS de M)
+  Y <- as.vector(X %*% beta_v) + bA * A + rnorm(n, sd = sig_e)
+  
+  # -- standardisation post-generation (comme OAL)
+  X <- scale(X)
+  
+  # -- meta compatible avec tes autres DGP
+  AY_strong <- 1:pC                          # Xc : confondeurs forts
+  AY_weak   <- (pC + 1):(pC + pP)            # Xp : confondeurs faibles
+  Instr     <- (pC + pP + 1):(pC + pP + pI)  # Xi : instruments
+  
+  true_confounders <- c(AY_strong, AY_weak)  # ce qui compte pour l'ATE
+  true_signals     <- c(true_confounders, Instr)
+  
+  variable_info <- data.frame(
+    variable = true_signals,
+    type     = c(rep("AY", pC + pP), rep("Instr", pI)),
+    level    = c(rep("strong", pC), rep("weak", pP), rep("strong", pI)),
+    beta     = c(rep(beta_strong, pC), rep(beta_weak, pP), rep(0, pI)),
+    alpha    = c(rep(alpha_conf, pC + pP), rep(alpha_instr, pI))
+  )
+  
+  list(
+    X = X, A = A, Y = Y,
+    true_signals     = true_signals,
+    true_confounders = true_confounders,
+    variable_info    = variable_info
+  )
+}
 DGP <- function(n, p, beta_AY,  beta_MY, beta_AM) { 
   
   X <- matrix(runif(n*p, -1, 1), ncol = p)
@@ -125,12 +189,12 @@ DGP_four_signals_corr<- function(n, p, rho_x = 0, noise_sd = 0.3) {
   # ============================================================
   
   beta_AY <- c(
-    weak   = 0.05,
+    weak   = 0.1,
     strong = 1.00
   )
   
   beta_MY <- c(
-    weak   = 0.15,
+    weak   = 0.2,
     strong = 1.00
   )
   
@@ -214,5 +278,61 @@ DGP_four_signals_corr<- function(n, p, rho_x = 0, noise_sd = 0.3) {
     true_signals = true_signals,
     true_confounders = true_confounders,
     variable_info = variable_info
+  )
+}
+
+
+DGP_cbs_style <- function(n = 200, p = 1000,
+                          bA = 2, beta_dom = 10, beta_weak = 1,
+                          n_weak = 13, alpha_conf = 2, alpha_instr = 3) {
+  
+  X <- matrix(runif(n * p, min = -1, max = 1), ncol = p)
+  
+  # -- roles SANS chevauchement ------------------------------------
+  idx_dom   <- 1                          # dominant sur Y (pas dans A)
+  idx_conf  <- c(2, 3)                    # confondeurs (A et Y)
+  # predicteurs purs de Y : juste apres les confondeurs, n_weak-2 d'entre eux
+  idx_pureY <- 4:(1 + n_weak)             # X4..X14  (11 variables si n_weak=13)
+  idx_instr <- (2 + n_weak):(3 + n_weak)  # X15, X16 : instruments, hors zone Y
+  
+  # variables agissant sur Y (dominant + confondeurs + purs)
+  idx_Y     <- c(idx_dom, idx_conf, idx_pureY)
+  
+  # -- traitement : confondeurs + instruments agissent sur A -------
+  eta_A <- rowSums(X[, idx_conf,  drop = FALSE]) * alpha_conf +
+    rowSums(X[, idx_instr, drop = FALSE]) * alpha_instr
+  A <- rbinom(n, 1, expit(eta_A))
+  
+  # -- outcome : dominant (beta_dom) + confondeurs & purs (beta_weak)
+  Y <- bA * A +
+    X[, idx_dom] * beta_dom +
+    rowSums(X[, c(idx_conf, idx_pureY), drop = FALSE]) * beta_weak +
+    rnorm(n)
+  
+  # -- meta (aucun chevauchement) ----------------------------------
+  variable_info <- data.frame(
+    variable = c(idx_dom, idx_conf, idx_pureY, idx_instr),
+    type = c("domPred",
+             rep("confounder", length(idx_conf)),
+             rep("purePred",   length(idx_pureY)),
+             rep("instrument", length(idx_instr))),
+    level = c("dominant",
+              rep("weak", length(idx_conf) + length(idx_pureY)),
+              rep("none", length(idx_instr))),
+    beta = c(beta_dom,
+             rep(beta_weak, length(idx_conf) + length(idx_pureY)),
+             rep(0, length(idx_instr))),
+    stringsAsFactors = FALSE
+  )
+  
+  list(
+    X = X, A = A, Y = Y,
+    true_confounders = idx_conf,
+    pure_predictors  = idx_pureY,
+    dominant         = idx_dom,
+    instruments      = idx_instr,
+    true_signals     = variable_info$variable,
+    variable_info    = variable_info,
+    bA = bA
   )
 }
