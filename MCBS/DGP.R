@@ -284,7 +284,7 @@ DGP_four_signals_corr<- function(n, p, rho_x = 0, noise_sd = 0.3) {
 
 DGP_cbs_style <- function(n = 200, p = 1000,
                           bA = 2, beta_dom = 10, beta_weak = 1,
-                          n_weak = 13, alpha_conf = 2, alpha_instr = 3) {
+                          n_weak = 13, alpha_conf = 0.4, alpha_instr = 0.6) {
   
   X <- matrix(runif(n * p, min = -1, max = 1), ncol = p)
   

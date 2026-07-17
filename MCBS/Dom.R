@@ -55,7 +55,7 @@ peel_until_noise <- function(X, A, Y,
     stringsAsFactors = FALSE
   )
   
-  sub <- sample(remaining, ceiling(0.50 * length(remaining)))
+  sub <- sample(remaining, ceiling(1 * length(remaining)))
   thr_fixed <- noise_threshold(X, y_cur, A, sub, B = B, gamma = gamma)
   
   for (it in 1:max_iter) {
@@ -122,18 +122,17 @@ peel_until_noise <- function(X, A, Y,
 
 library(Ball)
 set.seed(1)
-dat <- DGP_cbs_style(n = 200, p = 1000,
-                      bA = 2, beta_dom = 7, beta_weak = 2, n_weak = 5,
-                      alpha_conf = 2, alpha_instr = 3)
-
+n <-200 ; p<- 10000
+dat <- DGP_oal_total(n ,p, rho_x = 0, sig_e = 0.1, bA = 1,
+                                 beta_strong = 1.5, beta_weak = 0.2,
+                                 alpha_conf = 1.0, alpha_instr = 1.0)
 tm <- system.time({
   out <- peel_until_noise(dat$X, dat$A, dat$Y,
-                          gamma = 0.10, B = 100, verbose = TRUE)
+                          gamma = 0.10, B = 50, verbose = TRUE)
 })
 
 cat("\nk_hat =", out$k_hat, "\n")
 cat("Variables pelees :", out$selected, "\n")
-cat("Vrais confondeurs:", dat$true_confounders, "\n")
 print(out$log)
 
 cat(sprintf("\nTemps total peeling : %.1f s (elapsed)\n", tm["elapsed"]))

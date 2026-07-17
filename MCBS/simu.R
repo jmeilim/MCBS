@@ -37,17 +37,15 @@ make_rank <- function(ord, p) {
 
 set.seed(42)
 
-B  <- 100
-n  <- 200       
-p  <- 1000    
+B  <- 500
 k1 <- 2
 k2 <- 15
 
 one_run <- function(b) {
-  
-  dat <- DGP_cbs_style(n = 200, p = 1000,
-                       bA = 2, beta_dom = 5, beta_weak = 1, n_weak = 5,
-                       alpha_conf = 2, alpha_instr = 3)
+  n <-200 ; p<- 1000
+  dat <- DGP_oal_total(n ,p, rho_x = 0, sig_e = 0.3, bA = 1,
+                       beta_strong = 150, beta_weak = 0.2,
+                       alpha_conf = 1.0, alpha_instr = 1.0)
   X <- dat$X; A <- dat$A; Y <- dat$Y
   info <- dat$variable_info
   true_signals <- dat$true_signals
@@ -97,7 +95,7 @@ clusterEvalQ(cl, { .libPaths("~/Rlibs"); library(Ball); library(MASS) })
 
 clusterExport(cl, varlist = c(
   "B", "n", "p", "k1", "k2",
-  "DGP_cbs_style", "expit",
+  "DGP_oal_total", "expit",
   "compute_S1_raw", "compute_S1_res",
   "order_S1", "make_rank", "resid_lm",
   "one_run",
