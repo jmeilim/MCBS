@@ -122,7 +122,7 @@ peel_until_noise <- function(X, A, Y,
 
 library(Ball)
 set.seed(1)
-n <-200 ; p<- 10000
+n <-200 ; p<- 1000
 dat <- DGP_oal_total(n ,p, rho_x = 0, sig_e = 0.1, bA = 1,
                                  beta_strong = 1.5, beta_weak = 0.2,
                                  alpha_conf = 1.0, alpha_instr = 1.0)

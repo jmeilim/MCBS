@@ -10,8 +10,8 @@ expit <- function(x) {
 
 expit <- function(x) 1 / (1 + exp(-x))
 
-DGP_oal_total <- function(n, p, rho_x = 0, sig_e = 0.001, bA = 1,
-                          beta_strong = 1.5, beta_weak = 1,
+DGP_oal_total <- function(n, p, rho_x = 0, sig_e = 0.1, bA = 1,
+                          beta_strong = 5, beta_weak = 1,
                           alpha_conf = 1.0, alpha_instr = 1.0) {
   
   # -- 6 covariees non-bruit, 2 par role, comme OAL
