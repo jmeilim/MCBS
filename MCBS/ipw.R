@@ -1,68 +1,77 @@
-# ============================================================
-# Piste 1 : IPW pur — 100 runs
-# L'estimateur ne depend QUE du PS, donc uniquement de la selection.
-# ============================================================
-
-ipw_from_selected <- function(X, D, Y, K, trim = 0.02) {
+dr_from_selected <- function(X, D, Y, K, trim = 0.02) {
   if (length(K) == 0) return(NA_real_)
   Xs <- as.data.frame(X[, K, drop = FALSE])
   names(Xs) <- paste0("v", seq_along(K))
-  fit <- suppressWarnings(
+  
+  psfit <- suppressWarnings(
     glm(D ~ ., data = data.frame(D = D, Xs), family = binomial))
-  ps <- as.numeric(predict(fit, type = "response"))
+  ps <- as.numeric(predict(psfit, type = "response"))
   ps <- pmin(pmax(ps, trim), 1 - trim)
-  mean(D*Y/ps) - mean((1-D)*Y/(1-ps))
+  
+
+  fit_or <- function(arm_idx) {
+    dtr <- data.frame(Y = Y[arm_idx], Xs[arm_idx, , drop = FALSE])
+    m   <- lm(Y ~ ., data = dtr)
+    as.numeric(predict(m, newdata = Xs))    
+  }
+  b1 <- fit_or(which(D == 1))
+  b0 <- fit_or(which(D == 0))
+  
+  mean(DR(ps, b1, b0, D, Y))
 }
 
-run_ipw <- function(seed, n = 200, p = 1000, ac = 1.0, bd = 10, bc = 2) {
+
+run_dr <- function(seed, n = 300, p = 1000, ac = 1.0, bd = 10, bc = 2) {
   set.seed(seed)
-  X <- matrix(runif(n*p, -1, 1), ncol = p)
-  ps_true <- 1/(1 + exp(-rowSums(X[, 1:2])*ac))
-  D <- rbinom(n, 1, ps_true)
-  Y <- D*2 + rowSums(X[, 1:2])*bc + X[, 4]*bd + rnorm(n)
+  X  <- matrix(runif(n*p, -1, 1), ncol = p)
+  U1 <- X[,1]^2 - 1/3          
+  U2 <- X[,2]^2 - 1/3
+  pr <- expit(2*U1 + 2*U2)     
+  D  <- rbinom(n, 1, pr)
+  Y  <- 2*D + bc*(X[,1]^2 + X[,2]^2) + bd*X[,7] + rnorm(n)
   
+  # screening CBS : top-30
   rho   <- vapply(1:p, function(j) Causal.cor(X[, j], Y, D), numeric(1))
   K_cbs <- order(rho, decreasing = TRUE)[1:min(30, p)]
-  out   <- peel_until_noise(X, D, Y, gamma = 0.10, B = 100, verbose = FALSE)
   
-  c(ipw_pstrue      = mean(D*Y/ps_true) - mean((1-D)*Y/(1-ps_true)),
-    ipw_oracle      = ipw_from_selected(X, D, Y, c(1, 2)),
-    ipw_oracle_plus = ipw_from_selected(X, D, Y, c(1, 2, 4)),
-    ipw_cbs         = ipw_from_selected(X, D, Y, K_cbs),
-    ipw_peel        = ipw_from_selected(X, D, Y, out$selected),
-    k_hat           = out$k_hat,
-    cap_cbs         = as.numeric(all(c(1, 2) %in% K_cbs)),
-    cap_peel        = as.numeric(all(c(1, 2) %in% out$selected)),
-    has_X4          = as.numeric(4 %in% out$selected),
-    exact_target    = as.numeric(setequal(out$selected, c(1, 2, 4))))
+  # peeling
+  out    <- peel_until_noise(X, D, Y, gamma = 0.10, B = 200, verbose = FALSE)
+  K_peel <- out$selected
+  
+  c(dr_oracle      = dr_from_selected(X, D, Y, c(1, 2)),
+    dr_oracle_plus = dr_from_selected(X, D, Y, c(1, 2, 4)),
+    dr_cbs         = dr_from_selected(X, D, Y, K_cbs),
+    dr_peel        = dr_from_selected(X, D, Y, K_peel),
+    k_hat          = out$k_hat,
+    cap_cbs        = as.numeric(all(c(1, 2) %in% K_cbs)),
+    cap_peel       = as.numeric(all(c(1, 2) %in% K_peel)),
+    exact_target   = as.numeric(setequal(K_peel, c(1, 2, 4))))
 }
 
-# --- Monte Carlo (PSOCK, Windows-compatible) ---
+# --- Monte Carlo parallelise ---
 library(parallel)
-run_mc_ipw <- function(seeds, ncores = min(detectCores() - 1, 8)) {
+run_mc_dr <- function(seeds, ncores = min(detectCores() - 1, 8)) {
   cl <- makeCluster(ncores)
   on.exit(stopCluster(cl), add = TRUE)
   clusterEvalQ(cl, { library(Ball); library(glmnet) })
-  clusterExport(cl, c("run_ipw", "ipw_from_selected", "peel_until_noise",
+  clusterExport(cl, c("run_dr", "dr_from_selected", "peel_until_noise",
                       "noise_threshold", "permute_within_A", "resid_on",
-                      "Causal.cor", "expit"), envir = .GlobalEnv)
-  t(parSapply(cl, seeds, run_ipw))
+                      "Causal.cor", "DR", "expit"), envir = .GlobalEnv)
+  t(parSapply(cl, seeds, run_dr))
 }
 
-MC <- as.data.frame(run_mc_ipw(1:200))
+# --- lancement ---
+MC2 <- as.data.frame(run_mc_dr(1:10))
 
-# --- resume ---
 truth <- 2
-cat(sprintf("IPW  n=200  p=1000  alpha_conf=1.0  beta_dom=10  (%d runs)\n\n", nrow(MC)))
-cat(sprintf("%-16s %9s %8s %8s\n", "estimateur", "biais", "sd", "rmse"))
-for (nm in c("ipw_pstrue", "ipw_oracle", "ipw_oracle_plus", "ipw_cbs", "ipw_peel")) {
-  v <- MC[[nm]]
-  cat(sprintf("%-16s %+9.4f %8.4f %8.4f\n",
-              nm, mean(v) - truth, sd(v), sqrt(mean((v - truth)^2))))
-}
-cat(sprintf("\ncapture {1,2}   CBS %3.0f%%  |  Peeling %3.0f%%\n",
-            100*mean(MC$cap_cbs), 100*mean(MC$cap_peel)))
-cat(sprintf("X4 (precision) dans le pele : %3.0f%%\n", 100*mean(MC$has_X4)))
-cat(sprintf("cible exacte {1,2,4}        : %3.0f%%\n", 100*mean(MC$exact_target)))
-cat(sprintf("k_hat : median %.0f  [%.0f, %.0f]\n",
-            median(MC$k_hat), min(MC$k_hat), max(MC$k_hat)))
+cat(sprintf("beta_dom=10  (%d runs)\n\n", nrow(MC2)))
+res2 <- t(sapply(c("dr_oracle","dr_oracle_plus","dr_cbs","dr_peel"),
+                 function(nm){ v <- MC2[[nm]]
+                 c(biais = mean(v)-truth, mc_se = sd(v)/sqrt(length(v)),
+                   sd = sd(v), rmse = sqrt(mean((v-truth)^2))) }))
+print(round(res2, 4))
+cat(sprintf("\ncapture {1,2}  CBS %.0f%%  |  Peeling %.0f%%\n",
+            100*mean(MC2$cap_cbs), 100*mean(MC2$cap_peel)))
+cat(sprintf("cible exacte {1,2,4} : %.0f%%   | k_hat median %.0f [%.0f,%.0f]\n",
+            100*mean(MC2$exact_target),
+            median(MC2$k_hat), min(MC2$k_hat), max(MC2$k_hat)))

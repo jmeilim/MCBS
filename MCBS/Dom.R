@@ -123,12 +123,18 @@ peel_until_noise <- function(X, A, Y,
 library(Ball)
 set.seed(1)
 n <-200 ; p<- 1000
-dat <- DGP_oal_total(n ,p, rho_x = 0, sig_e = 0.1, bA = 1,
-                                 beta_strong = 1.5, beta_weak = 0.2,
-                                 alpha_conf = 1.0, alpha_instr = 1.0)
+X  <- matrix(runif(n*p, -1, 1), ncol = p)
+U1 <- X[,1]^2 - 1/3          
+U2 <- X[,2]^2 - 1/3
+pr <- expit(2*U1 + 2*U2)     
+A  <- rbinom(n, 1, pr)
+Y  <- 2*A + 4*(X[,1]^2 + X[,2]^2) + 10*X[,7] + rnorm(n)
+dat <- list(
+  X = X, A = A, Y = Y
+)
 tm <- system.time({
   out <- peel_until_noise(dat$X, dat$A, dat$Y,
-                          gamma = 0.10, B = 50, verbose = TRUE)
+                          gamma = 0.10, B = 100, verbose = TRUE)
 })
 
 cat("\nk_hat =", out$k_hat, "\n")

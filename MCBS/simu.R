@@ -43,13 +43,15 @@ k2 <- 15
 
 one_run <- function(b) {
   n <-200 ; p<- 1000
-  dat <- DGP_oal_total(n ,p, rho_x = 0, sig_e = 0.3, bA = 1,
-                       beta_strong = 150, beta_weak = 0.2,
-                       alpha_conf = 1.0, alpha_instr = 1.0)
-  X <- dat$X; A <- dat$A; Y <- dat$Y
-  info <- dat$variable_info
-  true_signals <- dat$true_signals
-  
+  X  <- matrix(runif(n*p, -1, 1), ncol = p)
+  U1 <- X[,1]^2 - 1/3          
+  U2 <- X[,2]^2 - 1/3
+  pr <- expit(2*U1 + 2*U2)     
+  A  <- rbinom(n, 1, pr)
+  Y  <- 2*A + 4*(X[,1]^2 + X[,2]^2) + 10*X[,7] + rnorm(n)
+  dat <- list(
+    X = X, A = A, Y = Y
+  )
 
   S1_raw <- compute_S1_raw(X, Y, A)
   ord1 <- order_S1(S1_raw, 1:p)
@@ -94,8 +96,7 @@ clusterSetRNGStream(cl, 42)
 clusterEvalQ(cl, { .libPaths("~/Rlibs"); library(Ball); library(MASS) })
 
 clusterExport(cl, varlist = c(
-  "B", "n", "p", "k1", "k2",
-  "DGP_oal_total", "expit",
+  "B", "n", "p", "k1", "k2", "expit",
   "compute_S1_raw", "compute_S1_res",
   "order_S1", "make_rank", "resid_lm",
   "one_run",
