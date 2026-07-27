@@ -124,11 +124,11 @@ library(Ball)
 set.seed(1)
 n <-200 ; p<- 1000
 dat <- DGP_oal_total(n ,p, rho_x = 0, sig_e = 0.1, bA = 1,
-                                 beta_strong = 1.5, beta_weak = 0.2,
+                                 beta_strong = 2, beta_weak = 0.2,
                                  alpha_conf = 1.0, alpha_instr = 1.0)
 tm <- system.time({
   out <- peel_until_noise(dat$X, dat$A, dat$Y,
-                          gamma = 0.10, B = 50, verbose = TRUE)
+                          gamma = 0.10, B = 100, verbose = TRUE)
 })
 
 cat("\nk_hat =", out$k_hat, "\n")
