@@ -36,7 +36,7 @@ noise_threshold <- function(X, y_cur, A, candidates,
 
 peel_until_noise <- function(X, A, Y,
                              gamma      = 0.10,   
-                             B          = 50,    
+                             B          = 100,    
                              max_iter   = 50,     
                              recalibrate= FALSE,  
                              verbose    = TRUE ) {
@@ -47,6 +47,7 @@ peel_until_noise <- function(X, A, Y,
   
   log_df <- data.frame(
     iter        = integer(0),
+    
     n_peeled    = integer(0),   
     vars_peeled = character(0),
     score_max   = numeric(0),
@@ -55,7 +56,7 @@ peel_until_noise <- function(X, A, Y,
     stringsAsFactors = FALSE
   )
   
-  sub <- sample(remaining, ceiling(1 * length(remaining)))
+  sub <- sample(remaining, ceiling(0.1 * length(remaining)))
   thr_fixed <- noise_threshold(X, y_cur, A, sub, B = B, gamma = gamma)
   
   for (it in 1:max_iter) {

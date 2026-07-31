@@ -1,4 +1,4 @@
-# --- IPW Hajek a partir d'un ensemble selectionne ---
+
 ipw_from_selected <- function(X, D, Y, K, trim = 0.02, hajek = TRUE) {
   if (length(K) == 0) return(NA_real_)
   Xs <- as.data.frame(X[, K, drop = FALSE])
@@ -73,7 +73,7 @@ run_dr <- function(seed, n = 300, p = 1000, ac = 1.0, bd = 10, bc = 2) {
     exact_target    = as.numeric(setequal(K_peel, target)))
 }
 
-# --- Monte Carlo parallelise ---
+
 library(parallel)
 run_mc_dr <- function(seeds, ncores = min(detectCores() - 1, 8)) {
   cl <- makeCluster(ncores)
@@ -86,7 +86,7 @@ run_mc_dr <- function(seeds, ncores = min(detectCores() - 1, 8)) {
   t(parSapply(cl, seeds, run_dr))
 }
 
-# --- lancement ---
+
 MC2 <- as.data.frame(run_mc_dr(1:100))
 truth <- 2
 cat(sprintf("beta_dom=10  (%d runs)\n\n", nrow(MC2)))
