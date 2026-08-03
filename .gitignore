@@ -1,0 +1,7 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.git-credentials-mcbs
+.deploy_key/
+.git-last-pushed-sha
